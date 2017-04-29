@@ -1,0 +1,282 @@
+def select_degrees(f, d): 
+    selected = []
+    for coeff, mon in list(f):
+        if mon.degree() == d:
+            selected.append((coeff, mon))
+    return sum(coeff * mon for (coeff, mon) in selected)
+
+def fast_det(M, rows, cols, d, cache): #fast_det я взяла у Вас
+    assert len(rows) == len(cols)
+    if len(rows) == 1:
+        return select_degrees(M[rows[0], cols[0]], d)
+    key = (tuple(rows), tuple(cols), d)
+    if key in cache:
+        return cache[key]
+    sign = 1
+    other_cols = cols[1:]
+    res = 0
+    for row in rows:
+        other_rows = [r for r in rows if r != row]
+        for t in xrange(d + 1):
+            p = select_degrees(M[row, cols[0]], t)
+            q = fast_det(M, other_rows, other_cols, d - t, cache)
+            res += sign * p * q
+        sign *= -1
+    cache[key] = res
+    return res
+
+def delta_ij(R, F, i, j):
+    f = F[i]
+    R = F[0].parent()
+    n = len(R.gens())
+    X = R.gens()
+    Y = [var("Y%d" % i) for i in range(1, n + 1)]
+    S = PolynomialRing(R, Y)
+    s1 = {X[k]: Y[k] for k in range(j)}
+    s2 = {X[k]: Y[k] for k in range(j + 1)}
+    f1 = f.subs(s1)
+    f2 = f.subs(s2)
+    if f1 == f2:
+        return S(0)
+    delta =  S(factor((f1 - f2)/(X[j] - Y[j])))
+    #print "(delta, i, j) =", (delta, i, j)
+    return delta
+
+def Bezoutian(F, max_deg):
+    R = F[0].parent()
+    n = len(F)
+    s = 0
+    M = []
+    for i in range (n):
+        M.append([])
+        for j in range (n):
+            d = delta_ij(R, F, i, j)
+            reduced_coeffs = []
+            for coeff, mon in list(d):
+                if mon.degree() <= max_deg:
+                    reduced_coeffs.append((coeff, mon))
+            s = sum(term[0] * term[1] for term in reduced_coeffs)
+            M[i].append(s)
+    return Matrix(M)
+
+def bezoutian_det(F, max_deg):
+    M = Bezoutian(F, max_deg)
+    R = M[0, 0].parent()
+    n = len(F)
+    cache = {}
+    det = fast_det(M, range(M.nrows()), range(M.ncols()), max_deg, cache)
+    print "bezoutian_det is ready\n"
+    return R(det)
+
+def create_monomials(m, R) :
+    h = []
+    xlist = R.gens()
+    n = len(xlist)
+    degs = IntegerVectors(m, n)
+    for deg in degs:
+        h.append( prod([xlist[i] ^ deg[i] for i in range (len(deg))]) )
+    return h
+
+def Mat(F, d):
+    L = []
+    R = F[0].parent()
+    h = create_monomials(d, R)
+    v = []
+    for f in F:
+        v = []
+        for m in h:
+            v.append(f.coefficient(m))
+        L.append(v)
+    M = Matrix(L)
+    return M
+
+def Delta_t(F, t):
+    det = bezoutian_det(F, t)
+    if det == 0:
+        print >>sys.stderr, "In Delta_t: fast_det = 0\n"
+    S = det.parent()
+    mons_t = create_monomials(t, S)
+    coefs = []
+    for i in range (len(mons_t)):
+        coefs.append(det.monomial_coefficient(mons_t[i]))
+    d = max([fi.degree() for fi in coefs]) #почему-то выходит равным -1, если det = 0
+    if d < 0:
+        R = F[0].parent()
+        tn = sum(f.degree() - 1 for f in F)
+        mons_tn = create_monomials(tn - t, R)
+        if len(mons_t) != 0 and len(mons_tn) != 0:
+            return Matrix(R.base_ring(), len(mons_t), len(mons_tn))
+    M = Mat(coefs, d)
+    print "Delta_t is ready\n"
+    return M
+
+def S_tj(F, t, j):
+    R = F[0].parent()
+    d = [f.degree() for f in F]
+    if t - d[j] < 0:
+        return 0
+    if t - d[j] == 0:
+        return 1
+    h = create_monomials(t - d[j], R)
+    if j == 0:
+        return h
+    good = True
+    L = []
+    for mon in h:
+        good = True
+        key = mon.dict().keys()[0]
+        for i in range(j):
+            if key[i] >= d[i]:
+                good = False
+        if good:
+            L.append(mon)
+    if L == []:
+        print >>sys.stderr, "In S_tj", (t, j)
+    return L
+
+def D_t(F, t):
+    n = len(F)
+    L = []
+    g = 0
+    for j in range (n):
+        S = S_tj(F, t, j)
+        f = F[j]
+        if S == 0:
+            continue
+        elif S == 1:
+            L.append(f)
+        else:
+            for mon in S:
+                g = mon * f
+                L.append(g)
+    if L == []:
+        return -1
+    return Mat(L, t)
+
+def concat_matrices(A, B, flag):#flag = 0: лепим сбоку, flag = 1: лепим снизу
+    n = A.nrows()
+    m = A.ncols()
+    C = []
+    if flag == 0:
+        for i in range (n):
+            C.append(tuple(A.rows()[i]) + tuple(B.rows()[i]))
+        return Matrix(C)
+    if flag == 1:
+        for i in range (m):
+            C.append(tuple(A.columns()[i]) + tuple(B.columns()[i]))
+        return Matrix(C).transpose()
+
+def M_t(F, t):
+    t_n = sum([f.degree() - 1 for f in F])
+    A = Delta_t(F, t)
+    print "(A.nrows(), A.ncols()) =", (A.nrows(), A.ncols())
+    B = D_t(F, t)
+    if B != -1:
+        B = B.transpose()
+        print "(B.nrows(), B.ncols()) =", (B.nrows(), B.ncols())
+    C = D_t(F, t_n - t)
+    if C != -1:
+        print "(C.nrows(), C.ncols()) =", (C.nrows(), C.ncols())
+    if B == -1 and C == -1:
+        return A
+    if B == -1:
+        return concat_matrices(A, C, 1)
+    if C == -1:
+        return concat_matrices(A, B, 0)
+    return block_matrix([[A, B], [C, 0]])
+
+#Дальше идёт подсчёт знаменателя
+
+def E_tj(F, t, j):
+    d = [fi.degree() for fi in F]
+    n = len(F)
+    if j == n - 1:
+        return 0
+    Stj = S_tj(F, t, j)
+    if Stj == 0 or Stj == 1:
+        return 0
+    E = []
+    k = 0
+    for mon in Stj:
+        k = 0
+        key = mon.dict().keys()[0]
+        for i in range (j + 1, min(len(key), len(d))):
+            if key[i] >= d[i] and k == 0:
+                E.append(mon)
+                k = k + 1
+            elif k > 0:
+                 break
+    return E
+
+def rows_indices(F, t):
+    R = F[0].parent()
+    h = create_monomials(t, R)
+    d = [fi.degree() for fi in F]
+    L = []
+    k = 0
+    for mon in h:
+        k = 0
+        key = mon.dict().keys()[0]
+        for i in range (min(len(key), len(d))):
+            if key[i] >= d[i] and k == 0:
+                k = k + 1
+            elif key[i] >= d[i] and k == 1:
+                L.append(mon)
+                k = k + 1
+            elif k > 1:
+                 break
+    return L
+
+def columns_indices(F, t):
+    n = len(F)
+    L = []
+    for j in range (n - 1):
+        Etj = E_tj(F, t, j)
+        L.append(Etj)
+    return L
+
+def E_t(F, t):
+    ri = rows_indices(F, t)
+    ci = columns_indices(F, t)
+    L = []
+    g = 0
+    for i in range (len(ci)):
+        monomials = ci[i]
+        if monomials == 0:
+            continue
+        for mon in monomials:
+            g = mon * F[i]
+            L.append(g)
+    M = []
+    for f in L:
+        v = []
+        for m in ri:
+            v.append(f.coefficient(m))
+        M.append(v)
+    M1 = Matrix(M)
+    assert M1.nrows() == M1.ncols()
+    return M1
+
+def carlos_de_andrea(F, t):
+    Mt = M_t(F, t)
+    t_n = sum([f.degree() - 1 for f in F])
+    Et = E_t(F, t)
+    Etn = E_t(F, t_n - t)
+    print "Et =\n", Et
+    print "Etn = \n", Etn
+    print "Started counting M_t.det()"
+    Num = Mt.det()
+    print "Numerator is ready\n"
+    det1, det2 = 0, 0
+    if Et == Matrix([]) and Etn == Matrix([]):
+        return Num
+    elif Et == Matrix([]):
+        det2 = Etn.det()
+        return Num / det2
+    elif Etn == Matrix([]):
+        det1 = Et.det()
+    det1 = Et.det()
+    det2 = Etn.det()
+    Denom = det1 * det2
+    print "Denominator is ready\n"
+    return Num / Denom
