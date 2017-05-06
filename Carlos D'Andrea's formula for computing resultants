@@ -185,7 +185,7 @@ def M_t(F, t):
         return concat_matrices(A, B, 0)
     return block_matrix([[A, B], [C, 0]])
 
-#Дальше идёт подсчёт знаменателя
+#now we calculate the denominator
 
 def E_tj(F, t, j):
     d = [fi.degree() for fi in F]
@@ -262,11 +262,7 @@ def carlos_de_andrea(F, t):
     t_n = sum([f.degree() - 1 for f in F])
     Et = E_t(F, t)
     Etn = E_t(F, t_n - t)
-    print "Et =\n", Et
-    print "Etn = \n", Etn
-    print "Started counting M_t.det()"
     Num = Mt.det()
-    print "Numerator is ready\n"
     det1, det2 = 0, 0
     if Et == Matrix([]) and Etn == Matrix([]):
         return Num
@@ -278,5 +274,11 @@ def carlos_de_andrea(F, t):
     det1 = Et.det()
     det2 = Etn.det()
     Denom = det1 * det2
-    print "Denominator is ready\n"
+
+    if Num == 0 and Denom == 0:
+        poly_num = Mt.characteristic_polynomial('T')
+        poly_denom = Et.characteristic_polynomial('T')
+        poly_quo = poly_num.quo_rem(poly_denom)[0]
+        return poly_quo(0)
+
     return Num / Denom
